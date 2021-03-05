@@ -1,0 +1,5 @@
+#!/bin/sh
+NSAMPLES=2000
+Rscript fit_models.R stan_data.RData model_r0-e0-kr-kp $NSAMPLES &
+Rscript fit_models.R stan_data.RData model_r0-e0-kr-ke-kp $NSAMPLES &
+Rscript fit_models.R stan_data.RData full_model $NSAMPLES &

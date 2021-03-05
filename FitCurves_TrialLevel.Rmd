@@ -13,6 +13,7 @@ output:
 CHeck diffs wave 2 and rest, controls experimental in wave 2
 
 ```{r, warning = F}
+#rm(ls = list())
 library(rstan)
 library(chron)
 library(dplyr)
@@ -23,6 +24,38 @@ options(mc.cores = parallel::detectCores())
 theme_lh = function () { 
     theme_bw(base_size=20, base_family="Avenir")
 }
+
+u = function(x, x0){
+  # step function
+  y = x*0
+  y[x > x0] = 1
+  return(y)
+}
+
+estimate_learning = function(r0, e0, p0, kr, ke, kp, ti){ 
+ N = length(ti)
+ x = seq(0, N)
+ p1 = sapply(seq(N), function(i) ((1 - kr)^(i-1))* u(x, ti[i]))
+ q1 = rowSums(p1)
+
+ p2 = sapply(seq(N), function(i) ((1 - kr)^(i-1))*exp(-kc*(x-ti[i]))* u(x, ti[i]))
+ q2 = rowSums(p2)
+
+ p3 = sapply(seq(N), function(i) ((1 - kr)^(i-1))*(1 - exp(-kc*(x-ti[i]))) * u(x, ti[i]))
+ q3 = rowSums(p3)
+
+ rt = r0*(1 - kr * q1)  
+ cet = r0*kr*q2 + e0*exp(-kc*x)
+ cpt = r0*kr*kp*q3/kc + kp*e0*(1 -  exp(-kc*x))/kc + p0
+ ct = cet + cpt
+ 
+ learning = (ct[length(ct)] - ct[1]) 
+  
+return(learning = learning, ct = ct)
+
+}
+
+
 WD = "~/Software/LeftHand/fitcurves"
 DATADIR = file.path(WD, "./data/")
 setwd(WD)
@@ -54,13 +87,13 @@ unpaced_trials$sess_day_diff=0
 
 mysubjects = unique(unpaced_trials$username)
 for (name in mysubjects){
-unpaced_trials$sess_day[unpaced_trials$username == name] = round(difftime(unpaced_trials$sess_date[unpaced_trials$username == name], unpaced_trials$sess_date[unpaced_trials$username == name][1], units = "days"))
-mydays = unique(unpaced_trials$sess_day[unpaced_trials$username == name])
-mydiff = c(0, diff(mydays))
-cum_day = seq(length(unique(mydays)))
-names(mydiff) = names(cum_day) = mydays
-unpaced_trials$cum_day[unpaced_trials$username == name] = cum_day[as.character(unpaced_trials$sess_day[unpaced_trials$username == name])]
-unpaced_trials$sess_day_diff[unpaced_trials$username == name] = mydiff[as.character(unpaced_trials$sess_day[unpaced_trials$username == name])]
+ unpaced_trials$sess_day[unpaced_trials$username == name] = round(difftime(unpaced_trials$sess_date[unpaced_trials$username == name], unpaced_trials$sess_date[unpaced_trials$username == name][1], units = "days"))
+ mydays = unique(unpaced_trials$sess_day[unpaced_trials$username == name])
+ mydiff = c(0, diff(mydays))
+ cum_day = seq(length(unique(mydays)))
+ names(mydiff) = names(cum_day) = mydays
+ unpaced_trials$cum_day[unpaced_trials$username == name] = cum_day[as.character(unpaced_trials$sess_day[unpaced_trials$username == name])]
+ unpaced_trials$sess_day_diff[unpaced_trials$username == name] = mydiff[as.character(unpaced_trials$sess_day[unpaced_trials$username == name])]
 }
 
 #View(unpaced_trials[c("username", "true_sequence", "cumulative_trial", "accuracy","posterror")])
@@ -69,80 +102,52 @@ ok_unpaced_trials = subset(unpaced_trials, accuracy == 1)
 ok_unpaced_trials.clean = ok_unpaced_trials %>% group_by(username, sess_num, true_sequence) %>% mutate(MT = markoutliers(MT))
 ok_paced_trials = subset(paced_trials, accuracy == 1)
 
-#subject_data = read.csv("C:/Users/benjamin.garzon/Google Drive/MyPapers/LeftHand/Experiment2/Randomization/SubjectData.csv")
+subject_data = read.csv("~/Software/LeftHand/fitcurves/data/SubjectData.csv")
 
-```
-
-
-# session variables
-
-# subjects variables
-Prepare data
-
-```{r fig.width=25, fig.asp=0.4, warning= F}
-
-# second process controlling a and b
-# loo
-# add and compare with controls e. g. 10 and 10
-# check what happens with sess_day float?
-# identify which parameters vary meaningfully
-# study pairs plot
-# different noise for different people
-
-# get principal factor
-# add and compare with controls
-
-# unfold trials and put wrong trials
-# predict unseen session, preditct untrained
-# errors are normal?
-
-# calculate the number of sequences automatically (not 3) xxx
-# add coffee etc covariates, time of day -- xxx
-# test time of day xxxx
-# sequences as group levels - make it hierarchical xxxx
-# posterrors xxx
-# consolidation and sleep xxx 
-# unfold sequences xxx
-# three-compartment model xxx
-# what percentage of the variance am I explaining? xxx
-if(F){
-mytrials = subset(ok_unpaced_trials.clean, username %in% c("lue1103", "lue1104", "lue1105", "lue2105", "lue1107",  "lue2101", "lue2103", "lue3101", "lue3102", "lue5101") & seq_train == "trained" & sess_num < 25) %>% filter(!is.na(MT))  
-mytrials = subset(ok_unpaced_trials.clean, username %in% c( "lue1107",  "lue2101", "lue2103", "lue3101", "lue3102", "lue5101") & seq_train == "trained" & sess_num < 15) %>% filter(!is.na(MT))  
-
-} else {
-#mytrials = subset(ok_unpaced_trials.clean, group == "Experimental" & seq_train == "trained") %>% filter(!is.na(MT))
-  
+# prepare data
 # lue1201 did the wrong first sessions an messes up the estimates
+# select data
 mytrials = subset(ok_unpaced_trials.clean, username != "lue1201" & seq_train == "trained" ) %>% filter(!is.na(MT)) 
-#  %>% group_by(username, trial, sess_day) %>% summarise(MT = median(MT, na.rm = T), RT = median(RT, 
-}
-mytrials = mytrials %>% arrange(username, sess_day, true_sequence, trial)%>%filter(trial>10)
+mytrials = mytrials %>% arrange(username, sess_day, true_sequence, trial)%>%filter(trial > MINTRIALS)
 
 mytrials$username = factor(mytrials$username)
 mytrials$true_sequence = factor(mytrials$true_sequence)
 
+```
+
+# Plot data
+```{r}
 plot.MT = ggplot(mytrials, aes(x = sess_day, y = MT, group = username, col = trial)) + geom_line(size = 1) + geom_point(size = 2) + theme_lh() + xlab('Session') + ylab('Movement duration (ms)')  #+ facet_grid(username ~ . )
-print(plot.MT)
+#print(plot.MT)
 
 plot.MT = ggplot(mytrials, aes(x = trial, y = MT, group = sess_num, col = sess_num)) + geom_point(size = 0.1) + geom_line() + theme_lh() + xlab('Trial') + ylab('Movement duration (ms)')  + facet_grid(true_sequence ~username )
-print(plot.MT)
-
-
-####### 
-# lue1201 did the wrong sequencs in the first session
-#mytrials = subset(mytrials, !(username == "lue1201" & sess_num == 0))
-#plot.MT = ggplot(subset(mytrials, username == "lue1201"), aes(x = sess_day, y = MT, group = username, col = trial)) + geom_line(size = 1) + geom_point(size = 2) + theme_lh() + xlab('Session') + ylab('Movement duration (ms)')  + facet_grid(true_sequence ~ .  )
 #print(plot.MT)
-#######
 
-#mytrials$cluster = as.numeric(as.factor(paste(mytrials$username, format(mytrials$sess_day, width = 2, flag = "0") )))
-  mytrials$cluster = as.numeric(as.factor(paste(mytrials$username, format(mytrials$sess_day, width = 2, flag = "0"), mytrials$true_sequence) ))
+```
+
+# Prepare session variables
+
+```{r fig.width=25, fig.asp=0.4, warning= F}
+
+# show that it is better than the 1 compartment model
+# understand parameters
+# check what happens with sess_day float?
+# identify which parameters vary meaningfully
+# study pairs plot
+# different noise for different people
+# get principal factor
+# unfold trials and put wrong trials
+# predict unseen session, preditct untrained
+# errors are normal?
+
+mytrials$cluster = as.numeric(as.factor(paste(mytrials$username, format(mytrials$sess_day, width = 2, flag = "0"), mytrials$true_sequence) ))
 mysubjects = levels(mytrials$username)
-
 myclusters = unique(mytrials[c("username", "sess_day", "cum_day", "true_sequence")])
 mysessions = unique(mytrials[c("username", "sess_day", "cum_day")])
 
-View(myclusters) # %>% arrange(username, sess_day))
+#View(myclusters) 
+
+#Prepare covariates
 
 mycovars = c("posterror", "physical_activity", "sleep", "cigarettes",  "liquid", "coffee", "alcohol")
 mycovarsf = c("sess_time_cos", "sess_time_sin")
@@ -190,64 +195,79 @@ stan_data = list(cluster = mytrials$cluster,
                  Ncovars = length(mycovars),
                  Ncovarsf = length(mycovarsf)
                  )
+# save data
+save(stan_data, file = file.path(WD, "./data/stan_data.RData"))
+stophere
 ```
 #Three -compartment model
 
 There is a post-error slowing effect ~ 100 ms
 There is an effect of time of the day ~ 60 ms
-
 Retention factor  .2 -.9
 
 ```{r fig.width=25, fig.asp=0.4, warning= F}
 #stan_control = list(adapt_delta = 0.85, max_treedepth = 13)
-stan_control = list(adapt_delta = 0.85, max_treedepth = 12)
-ITER = 1000
-WARMUP = 750
+stan_control = list(adapt_delta = 0.9, max_treedepth = 13)
+ITER = 2000
+WARMUP = 1500
 
-stan_init = function() {list(mu_hyp_asub = c(3, -1, -3, 0, 0, 0), #rep(0, 6), 
-                             mu_hyp_bsub = array(0.3, 1), 
-                             mu_hyp_csub = rep(0, 6),
-                             sigma_hyp_asub = rep(1, 6),
-                             sigma_hyp_bsub = array(0.3, 1),
-                             sigma_hyp_csub = rep(1, 6),
-                             sigma = 200,
-                             mu_hyp_seq = rep(-1500, 6),
+stan_init.1 = function() {list(mu_hyp_csub = c(-1, -2.5, -2, rep(0, 3)),
+                             sigma_hyp_csub = c(1, 0.1, 1, rep(0.2, 3)),
+                             sigma = 250,
+                             mu_hyp_seq = rep(0, 6),
                              sigma_hyp_seq = rep(100, 6),
                              mu_hyp_beta = rep(0, 7),
                              sigma_hyp_beta = rep(50, 7))}
-  
-if (T){
-fit.1 = stan(file = "learning_model_constant3comp_HR.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control, init = stan_init)
-} else {
-fit.1 = vb(stan_model(file = "learning_model_constant3comp_HR.stan"), iter = ITER, data = stan_data, init = stan_init)
-}
+stan_init.0 = function() {list(mu_hyp_csub = c(-1, 0),
+                             sigma_hyp_csub = c(1, 0.2),
+                             sigma = 250,
+                             mu_hyp_seq = rep(0, 6),
+                             sigma_hyp_seq = rep(100, 6),
+                             mu_hyp_beta = rep(0, 7),
+                             sigma_hyp_beta = rep(50, 7))}
+if (T){   
+fit.1 = stan(file = "learning_model_constant3comp_HR.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control, init = stan_init.1)
+fit.0 = stan(file = "learning_model_constant1comp_HR.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control)
 
 # save results
-saveRDS(fit.1, file = file.path(WD, "./results/", paste0("fit-", format(Sys.time(), "%d%m%y_%H%M"), ".rds")))
-stophere
+saveRDS(fit.1, fit.0, file = file.path(WD, "./results/", paste0("fit-", format(Sys.time(), "%d%m%y_%H%M"), ".rds")))
+
+} else {
+myfit = readRDS("~/Software/LeftHand/fitcurves/results/fit-260221_1908.rds")
+}
+
+# compare models
+#loo.1 = loo(fit.1)
+#loo.0 = loo(fit.0)
 ```
 
 
 ```{r fig.width=25, fig.asp=0.4, warning= F}
 # check chains
 
-traceplot(fit.1, par = c('mu_hyp_csub', 'sigma_hyp_csub','sigma', 'mu_hyp_beta', 'sigma_hyp_beta', 'mu_hyp_seq', 'sigma_hyp_seq'), inc_warmup = T)
-traceplot(fit.1, par = c( 'mu_hyp_csub', 'sigma_hyp_csub', 'sigma'))
-plot(fit.1, par = c('mu_hyp_csub', 'sigma_hyp_csub'))
-plot(fit.1, par = c('mu_hyp_seq',  'sigma_hyp_seq'))
-pairs(fit.1, pars = c( 'mu_hyp_csub[1]', 'mu_hyp_csub[3]', 
+myfit = myfit
+traceplot(myfit, par = c('mu_hyp_csub', 'sigma_hyp_csub','sigma', 'mu_hyp_beta', 'sigma_hyp_beta', 'mu_hyp_seq', 'sigma_hyp_seq'), inc_warmup = T)
+traceplot(myfit, par = c( 'mu_hyp_csub', 'sigma_hyp_csub', 'sigma'))
+plot(myfit, par = c('mu_hyp_csub', 'sigma_hyp_csub'))
+plot(myfit, par = c('mu_hyp_seq',  'sigma_hyp_seq'))
+pairs(myfit, pars = c( 'mu_hyp_csub[1]', 'mu_hyp_csub[3]', 
                        'sigma_hyp_csub[1]', 'sigma_hyp_csub[3]'))
-pairs(fit.1, pars = c('mu_hyp_csub', 'sigma_hyp_csub'))
+
+plot(myfit, par = 'mu_hyp_beta')
+plot(myfit, par = c('r0_c_mean', 'e0_c_mean', 'p0_c_mean', 'kr_c_mean', 'ke_c_mean', 'kp_c_mean'))
+plot(myfit, par = 'retention_c')
 #check parameters
 
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',1]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',2]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',3]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',4]'))
+plot(myfit, par = paste0('csub[', seq(stan_data$Nsub), ',1]'), main = "r0")
+plot(myfit, par = paste0('csub[', seq(stan_data$Nsub), ',2]'), main = "e0")
+plot(myfit, par = paste0('csub[', seq(stan_data$Nsub), ',3]'), main = "c0")
+plot(myfit, par = paste0('csub[', seq(stan_data$Nsub), ',4]'), main = "kr")
+plot(myfit, par = paste0('csub[', seq(stan_data$Nsub), ',5]'), main = "ke")
+plot(myfit, par = paste0('csub[', seq(stan_data$Nsub), ',6]'), main = "kc")
 
-params = summary(fit.1)$summary[, "mean"]
-rhat = summary(fit.1)$summary[, "Rhat"]
-neff = summary(fit.1)$summary[, "n_eff"]
+params = summary(myfit)$summary[, "mean"]
+rhat = summary(myfit)$summary[, "Rhat"]
+neff = summary(myfit)$summary[, "n_eff"]
 
 r0_c = params[grep("\\br0_c\\[", names(params))]
 e0_c = params[grep("\\be0_c\\[", names(params))]
@@ -267,23 +287,23 @@ csub = matrix(params[grep("\\bcsub\\[", names(params))], , 6, byrow = T)
 
 subparams = csub
 colnames(subparams) = c("csub1", "csub2", "csub3", "csub4", "csub5", "csub6")
-  rownames(subparams) = seq(nrow(subparams))
-cor(subparams)
+rownames(subparams) = seq(nrow(subparams))
+parcor = cor(subparams)
 beta_all = params[grep("\\bbeta\\[", names(params))]
 beta = matrix(beta_all, , stan_data$Ncovars)
 colnames(beta) = mycovars
-#beta.samples = rstan::extract(fit.1, par = "beta")$beta
+#beta.samples = rstan::extract(myfit, par = "beta")$beta
 betaf_all = params[grep("betaf\\[", names(params))]
 betaf = matrix(betaf_all, , stan_data$Ncovarsf)
 colnames(betaf) = mycovarsf
-betaf.samples = rstan::extract(fit.1, par = "betaf")$betaf
+betaf.samples = rstan::extract(myfit, par = "betaf")$betaf
 
 plot(betaf[,1], betaf[,2], pch = 20)
 time_effect = apply(betaf.samples, c(1, 3), function(x) sqrt(sum(x^2)))
 
 y_new = params[grep("y_new\\[", names(params))]
 
-results = mytrials[c("username", "sess_day", "trial", "MT", "true_sequence")] %>% group_by(username, true_sequence) %>% mutate(ind = row_number())
+results = mytrials[c("username", "group", "sess_day", "trial", "MT", "true_sequence")] %>% group_by(username, true_sequence) %>% mutate(ind = row_number())
 results$MT.pred = y_new
 
 plot(results$MT, results$MT.pred, pch = 20, xlab = "Measured MT (ms)", ylab = "Predicted MT (ms)", cex = 0.1)
@@ -298,8 +318,8 @@ print(myplot)
 myplot = ggplot(results, aes(x = ind, y = MT, col = as.factor(sess_day))) + geom_point(size = 0.2) + geom_line(aes(x = ind, y = MT.pred, group = as.factor(sess_day)), col = "black" ) + theme_classic() + facet_grid(username ~ true_sequence)
 print(myplot)
 
-results.mean = results %>% group_by(username, sess_day, trial) %>% summarise(MT.pred = mean(MT.pred), MT = mean(MT))
-myplot = ggplot(results.mean, aes(x = trial, y = MT, col = username)) + geom_line(size = 0.2) + geom_line(aes(x = trial, y = MT.pred, group = username, col = username), size = 0.7) + theme_classic() + facet_grid(. ~ sess_day)
+results.mean = results %>% group_by(username, group, sess_day, trial) %>% summarise(MT.pred = mean(MT.pred), MT = mean(MT))
+myplot = ggplot(results.mean, aes(x = trial, y = MT, col = username)) + geom_line(size = 0.2) + geom_line(aes(x = trial, y = MT.pred, group = username, col = username), size = 0.7) + theme_classic() + facet_grid(group ~ sess_day)
 print(myplot)
 
 #myplot = ggplot(results, aes(x = trial, y = MT, col = true_sequence)) + geom_point() + geom_line(aes(x = trial, y = MT.pred, group = true_sequence, col = true_sequence)) + theme_classic() + facet_grid(sess_day ~ username )
@@ -307,337 +327,103 @@ print(myplot)
 
 # sequence difficulty differences
 # which parameters vary meaningfully by comparing parameter uncertainty with variability across subjects
-csub.samp = rstan::extract(fit.1, par = "csub")$csub
+csub.samp = rstan::extract(myfit, par = "csub")$csub
 
-asub.wt = colMeans(apply(asub.samp, c(2, 3), sd))
-asub.bt = apply(apply(asub.samp, c(2, 3), mean), 2, sd)
 csub.wt = colMeans(apply(csub.samp, c(2, 3), sd))
 csub.bt = apply(apply(csub.samp, c(2, 3), mean), 2, sd)
-asub.bt/asub.wt
-csub.bt/csub.wt
-
+var.ratio = csub.bt/csub.wt
+print (var.ratio)
 # sequence differences
 
 
 
 library(shinystan)
-launch_shinystan(fit.1)
+launch_shinystan(myfit)
 stophere
 
 ```
 
 #Characterize results
 ```{r}
-
+library(psych)
+library(nFactors)
+library(factoextra)
+mypars = as.data.frame(scale(subparams))
+colnames(mypars) = c("r0", "e0", "c0", "kr", "ke", "kc")
+pca = principal(mypars, nfactors = 2, residuals = F, rotate = "varimax")
+#pca = principal(mypars, nfactors = 6, residuals = F, rotate = "none")
+eigenvalues = pca$values
+nsubjects = pca$n.obs
+variables = length(eigenvalues)
+rep = 2000
+cent = 0.95
+aparallel = parallel(var = variables,
+                     subject = nsubjects, 
+                     rep = rep,
+                     cent = cent)$eigen$qevpea
+results.scree = nScree (x = eigenvalues, aparallel = aparallel)
+summary(results.scree)
+plotnScree(results.scree)
+plot(pca)
 ```
 
-```{r fig.width=25, fig.asp=0.4, warning= F}
-
-#stan_control = list(adapt_delta = 0.85, max_treedepth = 13)
-stan_control = list(adapt_delta = 0.8, max_treedepth = 12)
-ITER = 1500
-WARMUP = 1000
-
-stan_init = function() {list(mu_hyp_asub = array(300, 1), 
-                             mu_hyp_bsub = array(0.3, 1), 
-                             mu_hyp_csub = rep(0, 6),
-                             sigma_hyp_asub = array(100, 1),
-                             sigma_hyp_bsub = array(0.3, 1),
-                             sigma_hyp_csub = rep(1, 6),
-                             sigma = 200,
-                             mu_hyp_seq = rep(0, 6),
-                             sigma_hyp_seq = rep(100, 6),
-                             mu_hyp_beta = rep(300, 7),
-                             sigma_hyp_beta = rep(300, 7))}
-  
-if (T){
-fit.1 = stan(file = "learning_model_single3comp_HR.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control, init = stan_init)
-} else {
-fit.1 = vb(stan_model(file = "learning_model_single3comp_HR.stan"), iter = ITER, data = stan_data, init = stan_init)
-}
-
-# check chains
-traceplot(fit.1, par = c('mu_hyp_asub', 'sigma_hyp_asub', 'mu_hyp_bsub', 'sigma_hyp_bsub', 'mu_hyp_csub', 'sigma_hyp_csub','sigma', 'mu_hyp_beta', 'sigma_hyp_beta', 'mu_hyp_seq', 'sigma_hyp_seq'), inc_warmup = F)
-traceplot(fit.1, par = c('mu_hyp_asub', 'mu_hyp_bsub', 'mu_hyp_csub', 'sigma_hyp_asub', 'sigma_hyp_bsub', 'sigma_hyp_csub', 'sigma'))
-plot(fit.1, par = c('mu_hyp_asub',  'sigma_hyp_asub', 'sigma'))
-plot(fit.1, par = c('mu_hyp_bsub', 'mu_hyp_csub', 'sigma_hyp_bsub', 'sigma_hyp_csub'))
-plot(fit.1, par = c('mu_hyp_seq',  'sigma_hyp_seq'))
-pairs(fit.1, pars = c('mu_hyp_asub[1]', 'mu_hyp_csub[1]', 'mu_hyp_csub[3]', 
-                      'sigma_hyp_asub[1]', 'sigma_hyp_csub[1]', 'sigma_hyp_csub[3]'))
-
-#check parameters
-plot(fit.1, par = c('r0'))
-plot(fit.1, par = c('e0'))
-plot(fit.1, par = c('p0'))
-plot(fit.1, par = c('kr'))
-plot(fit.1, par = c('ke'))
-plot(fit.1, par = c('kp'))
-
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',1]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',2]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',3]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',4]'))
-
-params = summary(fit.1)$summary[, "mean"]
-rhat = summary(fit.1)$summary[, "Rhat"]
-neff = summary(fit.1)$summary[, "n_eff"]
-# a = params[grep("\\ba\\[", names(params))]
-# b = params[grep("\\bb\\[", names(params))]
-# c = params[grep("\\bc\\[", names(params))]
-
-r0 = params[grep("\\br0\\[", names(params))]
-e0 = params[grep("\\be0\\[", names(params))]
-p0 = params[grep("\\bp0\\[", names(params))]
-kr = params[grep("\\bkr\\[", names(params))]
-ke = params[grep("\\bke\\[", names(params))]
-kp = params[grep("\\bkp\\[", names(params))]
-
-r0_mean = params[grep("r0_mean", names(params))]
-e0_mean = params[grep("e0_mean", names(params))]
-p0_mean = params[grep("p0_mean", names(params))]
-kr_mean = params[grep("kr_mean", names(params))]
-ke_mean = params[grep("ke_mean", names(params))]
-kp_mean = params[grep("kp_mean", names(params))]
-
-asub = matrix(params[grep("\\basub\\[", names(params))], , 1, byrow = T)
-bsub = params[grep("\\bbsub\\[", names(params))]
-csub = matrix(params[grep("\\bcsub\\[", names(params))], , 6, byrow = T)
-
-subparams = as.data.frame(cbind(asub, bsub, csub))
-colnames(subparams) = c("asub1", "bsub2", "csub1", "csub2", "csub3", "csub4", "csub5", "csub6")
-rownames(subparams) = seq(nrow(subparams))
-cor(subparams)
-beta_all = params[grep("\\bbeta\\[", names(params))]
-beta = matrix(beta_all, , stan_data$Ncovars)
-colnames(beta) = mycovars
-#beta.samples = rstan::extract(fit.1, par = "beta")$beta
-betaf_all = params[grep("betaf\\[", names(params))]
-betaf = matrix(betaf_all, , stan_data$Ncovarsf)
-colnames(betaf) = mycovarsf
-betaf.samples = rstan::extract(fit.1, par = "betaf")$betaf
-
-plot(betaf[,1], betaf[,2], pch = 20)
-time_effect = apply(betaf.samples, c(1, 3), function(x) sqrt(sum(x^2)))
-
-y_new = params[grep("y_new\\[", names(params))]
-
-results = mytrials[c("username", "sess_day", "trial", "MT", "true_sequence")] %>% group_by(username, true_sequence) %>% mutate(ind = row_number())
-results$MT.pred = y_new
-
-plot(results$MT, results$MT.pred, pch = 20, xlab = "Measured MT (ms)", ylab = "Predicted MT (ms)", cex = 0.1)
-abline(0, 1)
-
-# explained variance
-exp.var = 1 - var(results$MT - results$MT.pred)/var(results$MT)
-
-
-myplot = ggplot(results, aes(x = trial, y = MT, col = true_sequence)) + geom_point(size = 0.2) + geom_line(aes(x = trial, y = MT.pred, group = true_sequence, col = true_sequence), size = 0.9) + theme_classic() + facet_grid(username ~ sess_day)
-print(myplot)
-
-myplot = ggplot(results, aes(x = ind, y = MT, col = as.factor(sess_day))) + geom_point(size = 0.2) + geom_line(aes(x = ind, y = MT.pred, group = as.factor(sess_day)), col = "black" ) + theme_classic() + facet_grid(username ~ true_sequence)
-print(myplot)
-
-results.mean = results %>% group_by(username, sess_day, trial) %>% summarise(MT.pred = mean(MT.pred), MT = mean(MT))
-myplot = ggplot(results.mean, aes(x = trial, y = MT, col = username)) + geom_line(size = 0.2) + geom_line(aes(x = trial, y = MT.pred, group = username, col = username), size = 0.7) + theme_classic() + facet_grid(. ~ sess_day)
-print(myplot)
-
-#myplot = ggplot(results, aes(x = trial, y = MT, col = true_sequence)) + geom_point() + geom_line(aes(x = trial, y = MT.pred, group = true_sequence, col = true_sequence)) + theme_classic() + facet_grid(sess_day ~ username )
-#print(myplot)
-
-# sequence difficulty differences
-
-
-# which parameters vary meaningfully by comparing parameter uncertainty with variability across subjects
-asub.samp = rstan::extract(fit.1, par = "asub")$asub
-bsub.samp = rstan::extract(fit.1, par = "bsub")$bsub
-csub.samp = rstan::extract(fit.1, par = "csub")$csub
-
-asub.wt = colMeans(apply(asub.samp, c(2, 3), sd))
-asub.bt = apply(apply(asub.samp, c(2, 3), mean), 2, sd)
-csub.wt = colMeans(apply(csub.samp, c(2, 3), sd))
-csub.bt = apply(apply(csub.samp, c(2, 3), mean), 2, sd)
-asub.bt/asub.wt
-csub.bt/csub.wt
-
-# sequence differences
-
-library(shinystan)
-launch_shinystan(fit.1)
-stophere
-
-```
-
-Two-compartment model
-
-```{r fig.width=25, fig.asp=0.4, warning= F}
-
-stan_control = list(adapt_delta = 0.8, max_treedepth = 12)
-ITER = 2000
-WARMUP = 1500
-
-stan_init = function() {list(mu_hyp_asub = array(1000, 1), 
-                             mu_hyp_bsub = array(0.3, 1), 
-                             mu_hyp_csub = c(1.3, -0.8, -2.2, -1.5),
-                             sigma_hyp_asub = array(1000, 1),
-                             sigma_hyp_bsub = array(0.3, 1),
-                             sigma_hyp_csub = c(1.6, 0.3, 0.4, 1.2),
-                             sigma = 200,
-                             mu_hyp_seq = rep(0, 6),
-                             sigma_hyp_seq = rep(100, 6))}
-
-
-  
-if (T){
-fit.1 = stan(file = "learning_model_single2comp_HR.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control, init = stan_init)
-} else {
-fit.1 = vb(stan_model(file = "learning_model_single2comp_HR.stan"), iter = ITER, data = stan_data, init = stan_init)
-}
-
-traceplot(fit.1, par = c('mu_hyp_asub', 'sigma_hyp_asub', 'mu_hyp_bsub', 'sigma_hyp_bsub', 'mu_hyp_csub', 'sigma_hyp_csub','sigma', 'mu_hyp_beta', 'sigma_hyp_beta', 'mu_hyp_seq', 'sigma_hyp_seq'), inc_warmup = F)
-traceplot(fit.1, par = c('mu_hyp_asub', 'mu_hyp_bsub', 'mu_hyp_csub', 'sigma_hyp_asub', 'sigma_hyp_bsub', 'sigma_hyp_csub', 'sigma'))
-plot(fit.1, par = c('mu_hyp_asub',  'sigma_hyp_asub', 'sigma'))
-plot(fit.1, par = c('mu_hyp_bsub', 'mu_hyp_csub', 'sigma_hyp_bsub', 'sigma_hyp_csub'))
-plot(fit.1, par = c('mu_hyp_seq',  'sigma_hyp_seq'))
-pairs(fit.1, pars = c('mu_hyp_asub[1]', 'mu_hyp_csub[1]', 'mu_hyp_csub[3]', 
-                      'sigma_hyp_asub[1]', 'sigma_hyp_csub[1]', 'sigma_hyp_csub[3]'))
-
-plot(fit.1, par = c('r0'))
-plot(fit.1, par = c('c0'))
-plot(fit.1, par = c('kr'))
-plot(fit.1, par = c('kc'))
-
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',1]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',2]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',3]'))
-plot(fit.1, par = paste0('csub[', seq(stan_data$Nsub), ',4]'))
-
-params = summary(fit.1)$summary[, "mean"]
-rhat = summary(fit.1)$summary[, "Rhat"]
-neff = summary(fit.1)$summary[, "n_eff"]
-# a = params[grep("\\ba\\[", names(params))]
-# b = params[grep("\\bb\\[", names(params))]
-# c = params[grep("\\bc\\[", names(params))]
-
-r0 = params[grep("\\br0\\[", names(params))]
-c0 = params[grep("\\bc0\\[", names(params))]
-kr = params[grep("\\bkr\\[", names(params))]
-kc = params[grep("\\bkc\\[", names(params))]
-
-asub = matrix(params[grep("\\basub\\[", names(params))], , 1, byrow = T)
-bsub = params[grep("\\bbsub\\[", names(params))]
-csub = matrix(params[grep("\\bcsub\\[", names(params))], , 4, byrow = T)
-
-subparams = as.data.frame(cbind(asub, bsub, csub))
-colnames(subparams) = c("asub1", "bsub2", "csub1", "csub2", "csub3", "csub4")
-rownames(subparams) = seq(nrow(subparams))
-cor(subparams)
-#beta_all = params[grep("beta\\[", names(params))]
-#beta = t(matrix(beta_all, , stan_data$Ncovars))
-#beta.samples = rstan::extract(fit.1, par = "beta")$beta
-y_new = params[grep("y_new\\[", names(params))]
-
-# explained variance
-
-results = mytrials[c("username", "sess_day", "trial", "MT", "true_sequence")] %>% group_by(username, true_sequence) %>% mutate(ind = row_number())
-results$MT.pred = y_new
-
-exp.var = 1 - var(results$MT - results$MT.pred)/var(results$MT)
-
-myplot = ggplot(results, aes(x = trial, y = MT, col = true_sequence)) + geom_point(size = 0.2) + geom_line(aes(x = trial, y = MT.pred, group = true_sequence, col = true_sequence), size = 0.9) + theme_classic() + facet_grid(username ~ sess_day)
-print(myplot)
-
-myplot = ggplot(results, aes(x = ind, y = MT, col = as.factor(sess_day))) + geom_point(size = 0.2) + geom_line(aes(x = ind, y = MT.pred, group = as.factor(sess_day)), col = "black" ) + theme_classic() + facet_grid(username ~ true_sequence)
-print(myplot)
-
-results.mean = results %>% group_by(username, sess_day, trial) %>% summarise(MT.pred = mean(MT.pred), MT = mean(MT))
-myplot = ggplot(results.mean, aes(x = trial, y = MT, col = username)) + geom_line(size = 0.2) + geom_line(aes(x = trial, y = MT.pred, group = username, col = username), size = 0.7) + theme_classic() + facet_grid(. ~ sess_day)
-print(myplot)
-
-#myplot = ggplot(results, aes(x = trial, y = MT, col = true_sequence)) + geom_point() + geom_line(aes(x = trial, y = MT.pred, group = true_sequence, col = true_sequence)) + theme_classic() + facet_grid(sess_day ~ username )
-#print(myplot)
-
-
-# which parameters vary meaningfully by comparing parameter uncertainty with variability across subjects
-asub.samp = rstan::extract(fit.1, par = "asub")$asub
-bsub.samp = rstan::extract(fit.1, par = "bsub")$bsub
-csub.samp = rstan::extract(fit.1, par = "csub")$csub
-
-asub.wt = colMeans(apply(asub.samp, c(2, 3), sd))
-asub.bt = apply(apply(asub.samp, c(2, 3), mean), 2, sd)
-csub.wt = colMeans(apply(csub.samp, c(2, 3), sd))
-csub.bt = apply(apply(csub.samp, c(2, 3), mean), 2, sd)
-asub.bt/asub.wt
-csub.bt/csub.wt
-
-# sequence differences
-
-library(shinystan)
-launch_shinystan(fit.1)
-
-# posterror slowing
-p = beta[2, ]
-plot(p[unique(subset(mytrials, username == "lue1103")$cluster)], type = "l", ylim = c(-300, 300))
-lines(p[unique(subset(mytrials, username == "lue1105")$cluster)], type = "l")
-lines(p[unique(subset(mytrials, username == "lue2103")$cluster)], type = "l")
-
-results = mytrials
-results = results %>% group_by(username, sess_day, true_sequence, seq_train) %>% summarise(n = n())
-results$posterror = p
-results.mean = results %>% group_by(sess_day, seq_train) %>% summarise(posterror = mean(posterror, na.rm = T))
-myplot = ggplot(results.mean, aes(x = sess_day, y = posterror)) + geom_line() + theme_classic() + facet_grid(. ~ seq_train )
-print(myplot)
-```
-
+# Check how much they learned
 ```{r}
-
+learning = NULL
+for (j in seq(stan_data$Nsub )){ 
+  ti = stan_data$time_mat[j, ]  
+  ti = ti[ti <= max(ti)] 
+  learning[j] = estimate_learning(r0_c[j] , e0_c[j], p0_c[j], kr_c[j], ke_c[j], kp_c[j], ti)
+}
 ```
 
-
-
-```{r, warnings = F}
-stophere 
-
-last_trials.all = subset(ok_unpaced_trials.clean, group == "Experimental" & trial > MINTRIALS & seq_train == "trained")  %>% 
-  group_by(sess_num) %>% 
-  dplyr::summarise(medianMT = median(MT, na.rm = T))
-
-# last_trials.user = subset(ok_unpaced_trials.clean, group == "Experimental" & trial > MINTRIALS) %>% 
-#   group_by(username, sess_num, followup, wave) %>% 
-#   dplyr::summarise(meanMT = mean(MT, na.rm = T), sdMT = sd(MT, na.rm = T))
-
-#plot.meanMT = ggplot(last_trials.all, aes(x = sess_num, y = medianMT)) + geom_line(size = 2) + geom_point(size = 3) + theme_lh() + xlab('Session') + ylab('Movement duration (ms)') 
-#print(plot.meanMT)
-
-stan_control = list(adapt_delta = 0.9, max_treedepth = 12)
-ITER = 3000
-WARMUP = 2500
-
-last_trials.all$cluster = 1
-# fit with stan
-stan_data = list(cluster = last_trials.all$cluster, x = last_trials.all$sess_num, y = last_trials.all$medianMT, 
-                 Nclus = max(last_trials.all$cluster), N = nrow(last_trials.all) )
-
-#fit = stan(file = "exponential_fit.stan", chains = 4, iter = 5000, warmup = 400, data = stan_data,
-fit.1 = stan(file = "learning_model_single1.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control)
-
-params = summary(fit.1)$summary[, "mean"]
-a1 = params[grep("a1\\[", names(params))]
-b1 = params[grep("b1\\[", names(params))]
-c = params[grep("c\\[", names(params))]
-y_new = params[grep("y_new\\[", names(params))]
-
-
-```
-
-#Post-error slowing
-#```{r}
-#for ( i)
-#```
-
-Reaction time and movement times
+# Are there differences between groups?
 ```{r}
+mygroup = rep("Intervention", length(mysubjects))
+mygroup[grep("lue(.)2", mysubjects)] = "Control"
+# is there a diff in parameters between groups?
+pvalues = apply(mypars, 2, function (x){  boxplot(x ~ mygroup); t.test(x ~ mygroup )$p.value})
+
+parcor = cor(mypars)
+pairs(mypars)
+#pca = princomp(mypars, cor = T)
+plot(pca)
+plot(cumsum(pca$values*2)/sum(pca$value*2)*100)
+print(pca$loadings)
+
+pairs(mypars)
+components = as.data.frame(pca$scores)
+components$StudyID = mysubjects
+components = merge(components, subject_data, by = "StudyID")
+components = cbind(components, mypars)
+components$group = mygroup
+cor(components[c("RC1", "RC2", "reasoning")] )
+#cor(components[c("Comp.1", "Comp.2", "Comp.3", "Comp.4", "Comp.5", "Comp.6", "reasoning")] )
+parcor = cor(cbind(mypars, components[c("Comp.1", "Comp.2", "Comp.3", "Comp.4", "Comp.5", "Comp.6", "reasoning")] )[mygroup == "Intervention", ])
+var = 'kr'
+mymodel = lm(as.formula(paste(var,  'group*gender', sep = '~')),  data = components)
+summary(mymodel)
+
+image(parcor)
+plot(components$reasoning, components$Comp.2)
+print(components %>% arrange(desc(Comp.2)))
+
+print(head(mypars %>% arrange(desc(improve))) )
+
+mypars$username = mysubjects
+K = merge(sess.diff, mypars, by = "username")
+cor.test(K$meanMT.diff, K$improve)
+plot(K$meanMT.diff, K$improve)
+text(K$meanMT.diff, K$improve, labels = as.character(K$username))
 
 ```
+
+
+
+
+
+
+
 
 
 ```{r}
@@ -690,20 +476,20 @@ WARMUP = 1500
 stan_init = function() {list(mu_hyp = c(800, .3, 1300), sigma_hyp = c(500, .2, 300))}
 
 #fit = stan(file = "exponential_fit.stan", chains = 4, iter = 5000, warmup = 400, data = stan_data,
-fit.1 = stan(file = "learning_model_single1_HR.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control, init = stan_init)
+myfit = stan(file = "learning_model_single1_HR.stan", chains = 4, iter = ITER, warmup = WARMUP, data = stan_data, control = stan_control, init = stan_init)
 
-plot(fit.1, par = c('a1'))
-plot(fit.1, par = c('b1'))
-plot(fit.1, par = c('c', 'sigma'))
-plot(fit.1, par = c('beta'))
+plot(myfit, par = c('a1'))
+plot(myfit, par = c('b1'))
+plot(myfit, par = c('c', 'sigma'))
+plot(myfit, par = c('beta'))
 
-params = summary(fit.1)$summary[, "mean"]
+params = summary(myfit)$summary[, "mean"]
 a1 = params[grep("a1\\[", names(params))]
 b1 = params[grep("b1\\[", names(params))]
 c = params[grep("c\\[", names(params))]
 beta_all = params[grep("beta\\[", names(params))]
 beta = t(matrix(beta_all, , stan_data$Ncovars))
-beta.samples = rstan::extract(fit.1, par = "beta")$beta
+beta.samples = rstan::extract(myfit, par = "beta")$beta
 y_new = params[grep("y_new\\[", names(params))]
 
 beta.means = apply(beta.samples, c(1, 2), mean)
@@ -736,8 +522,8 @@ for(j in unique(stan_data$cluster)){
   plot(tt, unlist(beta[1, j]*z[, 1] + beta[2, j]*z[, 2]), ylab = "MT", xlab = "Hour", type = "p", ylim = c(-200, 200), xlim = c(0, 24)) 
 }
 
-traceplot(fit.1, par = c('a1[1]', 'b1[1]', 'c[1]', 'sigma'))
-traceplot(fit.1, par = c('mu_hyp', 'sigma_hyp'))
+traceplot(myfit, par = c('a1[1]', 'b1[1]', 'c[1]', 'sigma'))
+traceplot(myfit, par = c('mu_hyp', 'sigma_hyp'))
 
 mypars = as.data.frame(cbind(a1, b1, c, beta[3, ]))
 
